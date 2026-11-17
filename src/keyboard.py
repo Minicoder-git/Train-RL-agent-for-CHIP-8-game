@@ -51,6 +51,10 @@ class Keyboard:
         0xA: "Z", 0x0: "X", 0xB: "C", 0xF: "V",
     }
     
+    # Số tick 60 Hz tối thiểu một phím được giữ ở trạng thái "nhấn", kể cả khi người dùng
+    # đã nhả ra. ROM chỉ đọc phím mỗi bước game (2 tick) nên cú chạm nhanh hơn thế sẽ bị mất.
+    MIN_HOLD_TICKS = 2
+
     def __init__(self, chip8):
         """
         Khởi tạo bàn phím.
@@ -62,6 +66,18 @@ class Keyboard:
         self.running = True
         # Theo dõi phím vừa được nhấn (cho các game cần edge detection)
         self.last_key_pressed = None
+        self._hold = {}        # phím CHIP-8 -> số tick còn phải giữ
+        self._released = set() # phím đã nhả nhưng còn đang giữ tối thiểu
+    
+    def tick(self):
+        """Gọi đúng 1 lần mỗi tick 60 Hz, SAU khi CPU đã chạy xong tick đó."""
+        for key in list(self._hold):
+            self._hold[key] -= 1
+            if self._hold[key] <= 0:
+                del self._hold[key]
+                if key in self._released:
+                    self._released.discard(key)
+                    self.chip8.keypad[key] = 0
     
     def handle_events(self):
         """
@@ -91,6 +107,8 @@ class Keyboard:
         if pygame_key in self.KEYMAP:
             chip8_key = self.KEYMAP[pygame_key]
             self.chip8.keypad[chip8_key] = 1
+            self._hold[chip8_key] = self.MIN_HOLD_TICKS
+            self._released.discard(chip8_key)
             self.last_key_pressed = chip8_key
             
 
@@ -102,7 +120,10 @@ class Keyboard:
         """Xử lý khi một phím được nhả ra."""
         if pygame_key in self.KEYMAP:
             chip8_key = self.KEYMAP[pygame_key]
-            self.chip8.keypad[chip8_key] = 0
+            if chip8_key in self._hold:      # chưa giữ đủ lâu -> nhả sau
+                self._released.add(chip8_key)
+            else:
+                self.chip8.keypad[chip8_key] = 0
     
     def get_pressed_key(self):
         """
@@ -118,6 +139,8 @@ class Keyboard:
         """Reset toàn bộ trạng thái bàn phím."""
         for i in range(16):
             self.chip8.keypad[i] = 0
+        self._hold.clear()
+        self._released.clear()
         self.last_key_pressed = None
     
     def is_running(self):
